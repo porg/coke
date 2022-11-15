@@ -1,0 +1,224 @@
+#!/bin/sh
+# coke - CONVERT file with any tool and KEEP parent directory, basename and filesystem metadata for output file.
+# See: ./coke-manpage.md for more info
+
+
+## Preliminary syntax checks
+
+### User request help / manpage
+if [[ "$#" = 1 && "$1" = "-h" ]]; then
+	if [[ "$(bat --version)" =~ ^bat\ .*$ || "$(which bat)" =~ ^/.*$ ]]; then
+		manCmd="bat" # Show manpage in "bat" if installed.
+	else
+		manCmd="cat" # Else show manpage in "cat".
+	fi
+	eval $manCmd $(dirname "$0")/coke-manpage.md
+	exit
+fi
+
+### Amount of paramaters
+if [[ "$#" -ne 3 && "$#" -ne 5 ]]; then
+	echo "Usage:"
+	echo
+	echo "  I)  coke <metadataFlags> <srcFile> <dstFile>"
+	echo
+	echo "  II) coke \"conversion tool command line with literal \\\$src and \\\$dst somewhere\" <srcSuffix> <dstSuffix> <metadataFlags> <srcFile>"
+	echo
+	echo "  -h to get help (manpage)."
+	echo
+	exit
+	exit
+fi
+
+### Check flags
+if [[ "$#" -eq 3 ]]; then
+	metadataFlags="$1"
+	# echo "Detected 3 paramaters. Running in mode I."
+elif [[ "$#" -eq 5 ]]; then
+	metadataFlags="$4"
+	# echo "Detected 5 paramaters. Running in mode II."
+fi
+# echo "metadataFlags are: \"$metadataFlags\""
+
+if [[ "$metadataFlags" =~ ^.*[^cmeM]+.*$ ]]; then
+	echo "Syntax for metadataFlags: \"\" | [c][m][e][E][f]"
+	echo
+	echo "-h to get help (manpage)."
+	echo
+	exit
+fi
+
+## Mode I — 3 params — <metadataFlags> <srcFile> <dstFile>
+
+if [[ "$#" -eq 3 ]]; then
+
+	### Checking files
+	if [[ ! -f "$2" ]]; then
+		echo "No regular file at src:"
+		echo $2
+		echo
+	fi
+	if [[ ! -f "$3" ]]; then
+		echo "No regular file at dst:"
+		echo $2
+		echo
+	fi
+	if [[ ! -f "$2" || ! -f "$3" ]]; then
+		exit
+	else
+		### Set src and dst which proved as ok and conflict free
+		src="$2"
+		dst="$3"
+	fi
+fi
+
+
+## Mode II — 5 params — <cmdLine> <srcSuffix> <dstSuffix> <metadataFlags> <srcFile>
+
+if [[ "$#" -eq 5 ]]; then
+	if [[ ! -f "$5" ]]; then
+		echo "No regular file at src:"
+		echo $5
+		exit
+	elif [[  "$2" == "$3" && -n "$2" ]]; then
+		echo "If <srcSuffix> and <dstSuffix> are not null,"
+		echo "then they must be different to avoid a file conflict."
+		exit
+	else
+		## Set variables
+		src="$5"
+		if [ -n "$2" ]; then
+			srcSuffix="$2"
+		fi
+
+		if [ -n "$3" ]; then
+			dstSuffix="$3"
+		fi
+
+		srcFolder=$(dirname "$src")
+		srcFileName="$(basename "${src%.*}")"
+		srcFileExt="${src##*.}"
+		
+		# Building dst
+		if [ -z "$dstSuffix" ]; then
+			dst="$srcFolder/${srcFileName}_converted.$srcFileExt"
+		## 
+		elif [[ "$dstSuffix" =~ ^\*.+$ ]]; then
+			dst="$srcFolder/$srcFileName${dstSuffix#\*}"
+		else
+			dst="$srcFolder/$srcFileName$dstSuffix.$srcFileExt"
+		fi
+		# Checking for existing file as dst
+		if [ -f "$dst" ]; then
+			echo "Existing file at dst:"
+			echo $dst
+			failDst=1
+		fi
+		
+		## If user supplied srcSuffix we build srcFinal 
+		if [ -n "$srcSuffix" ]; then
+			srcFinal="$srcFolder/$srcFileName$srcSuffix.$srcFileExt"
+			echo "Built srcFinal from srcSuffix."
+			echo "srcSuffix: $srcSuffix"
+			echo "srcFinal: $srcFinal"
+			# Checking for existing file as srcFinal
+			if [ -f "$srcFinal" ]; then
+				echo "File exists at filepath to which src would be renamed to:"
+				echo $srcFinal
+				failSrcFinal=1
+			fi
+		fi
+		if [[ $failDst || $failSrcFinal ]]; then
+			exit
+		fi
+
+
+
+
+		## Run the supplied command line with the path substitution
+
+		echo "DEBUG"
+		echo "     src: $src"
+		echo "srcFinal: $srcFinal"
+		echo "     dst: $dst"
+		echo " cmdLine: $1"
+		echo
+
+		### Approach 1 — Works if argument gets
+		eval $1
+		# coke.sh 'cp "$src" "$dst"'   < otherArgs >
+		# --> WORKS: Outer single quotes variables in double quotes.
+		# coke.sh "cp \"\$src\" \"\$dst\""   < otherArgs >
+		# --> WORKS: Outer double quotes inner escaped double quotes and escaped dollar symbol.
+
+		### Approach 2 — Failed regardless how I pass the variables
+		# $($1)
+
+		# coke.sh "cp $src $dst"   < otherArgs >
+		# --> FAILS as $src and $dst in calling env are NULL hence passing only "cp " to script
+		
+		# coke.sh "cp \$src \$dst"   < otherArgs >
+		# --> FAILS as $src and $dst get passed as literals into script and there not evaluated.
+
+		# coke.sh "`cp \$src \$dst`"   < otherArgs >
+		# --> FAILS as entire cmdLine in script remains NULL.
+
+
+
+	fi
+fi
+
+
+## Copying the attributes from src to dst — In modes I and II.
+
+	### Default "" gets set to "cM" and processed accordingly
+	if [[ "$metadataFlags" = "" ]]; then
+		metadataFlags="cf"
+	fi
+	### Date Created
+	if [[ "$metadataFlags"  =~ 'c' ]]; then
+		srcDateCreated=$(GetFileInfo -d "$src")
+		SetFile -d "$srcDateCreated" "$dst"
+	fi
+	### Date Modified
+	if [[ "$metadataFlags"  =~ 'm' ]]; then
+		srcDateModified=$(GetFileInfo -m "$src")
+		SetFile -m "$srcDateModified" "$dst"
+	fi
+	### File Extension Visibility flag gets copied from src to dst
+	if [[ "$metadataFlags"  =~ 'e' ]]; then
+		srcExtHidden=$(GetFileInfo -ae "$src")
+		if [ "$srcExtHidden" == 1 ]; then
+			SetFile -a E "$dst"
+		elif [ "$srcExtHidden" == 0 ]; then
+			SetFile -a e "$dst"
+		fi
+	fi
+	### File Extension gets hidden
+	if [[ "$metadataFlags"  =~ 'E' ]]; then
+		SetFile -a E "$dst"
+	fi
+	### File Extension gets shown
+		# No need to do anything.
+		# Done by default from CLI apps.
+	### Finder Comments, Finder Tags, much more with osxmetadata
+	if [[ "$metadataFlags"  =~ 'f' ]]; then
+		osxmetadata --copyfrom "$src" "$dst"
+	fi
+
+
+
+## Postprocessing - In mode II only
+
+if [[ "$#" -eq 5 ]]; then
+	### Rename src too if srcSuffix was submitted and srcFinal built consequently
+	if [[ -n "$srcFinal" ]]; then
+		mv "$src" "$srcFinal"
+	fi
+	### Mimicking of destructive in place editing
+	## Remove the source if srcSuffix and dstSuffix were both submitted empty
+	if [[ -z "$srcSuffix" && -z "$dstSuffix" ]]; then
+		rm "$src"
+		mv "$dst" "$src"
+	fi
+fi
