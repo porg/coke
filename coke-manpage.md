@@ -74,7 +74,7 @@
 
 ### 1) Drop audio track from video file
 
-	coke 'ffmpeg -i \$src -c copy -an "$dst"' "" "-audio-only" "cmf" ~/videos/ant.mp4
+	coke 'ffmpeg -i "$src" -c copy -an "$dst"' "" "-audio-only" "cmf" ~/videos/ant.mp4
 
   - `ant.mp4`             Original file, untouched, not renamed.
   - `ant-audio-only.mp4`  Converted file, creation and modification timestamps and FS metadata restored from original.
